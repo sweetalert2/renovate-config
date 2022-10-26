@@ -10,11 +10,7 @@
   "packageRules": [
     {
       "matchUpdateTypes": ["minor", "patch"],
-      "automerge": true
-    },
-    {
-      "matchPackageNames": ["sweetalert2"],
-      "stabilityDays": 0
+      "enabled": false
     }
   ]
 }

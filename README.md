@@ -12,3 +12,7 @@ Enable Renovate in your repo and just `extends` in `renovate.json`.
 ```
 
 Note: You don't have to install this config. Renovate fetches it from this GitHub repo automatically.
+
+## TODO
+
+- rollup minor and patch updates on a weekly basis https://github.com/renovatebot/renovate/issues/4404

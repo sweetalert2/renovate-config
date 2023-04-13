@@ -6,11 +6,15 @@
   ],
   "rangeStrategy": "update-lockfile",
   "dependencyDashboard": false,
-  "stabilityDays": 7,
+  "minimumReleaseAge": "10 days",
   "packageRules": [
     {
       "matchUpdateTypes": ["minor", "patch"],
       "enabled": false
+    },
+    {
+      "matchUpdateTypes": ["major"],
+      "minimumReleaseAge": "14 days"
     }
   ]
 }

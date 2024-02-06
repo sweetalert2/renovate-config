@@ -16,5 +16,18 @@
       "matchUpdateTypes": ["major"],
       "minimumReleaseAge": "14 days"
     }
-  ]
+  ],
+  "lockFileMaintenance": {
+    "enabled": false,
+    "recreateWhen": "always",
+    "rebaseStalePrs": true,
+    "branchTopic": "lock-file-maintenance",
+    "commitMessageAction": "Lock file maintenance",
+    "schedule": [
+      "before 4am on monday"
+    ],
+    "prBodyDefinitions": {
+      "Change": "All locks refreshed"
+    }
+  }
 }

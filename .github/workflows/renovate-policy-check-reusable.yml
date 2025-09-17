@@ -16,7 +16,7 @@ on:
         description: 'Custom regex pattern for PR title parsing'
         required: false
         type: string
-        default: 'fix\(deps\):\ update\ dependency\ ([^\ ]+)\ to\ v(.+)'
+        default: '(fix|chore)\(deps\):\ update\ dependency\ ([^\ ]+)\ to\ v(.+)'
     outputs:
       package-name:
         description: 'Extracted package name'
@@ -70,9 +70,11 @@ jobs:
 
           # Extract package name and version using the provided pattern
           if [[ $PR_TITLE =~ $PATTERN ]]; then
-            PACKAGE_NAME="${BASH_REMATCH[1]}"
-            VERSION="${BASH_REMATCH[2]}"
+            PREFIX="${BASH_REMATCH[1]}"
+            PACKAGE_NAME="${BASH_REMATCH[2]}"
+            VERSION="${BASH_REMATCH[3]}"
 
+            echo "Prefix: $PREFIX"
             echo "Package Name: $PACKAGE_NAME"
             echo "Version: $VERSION"
 

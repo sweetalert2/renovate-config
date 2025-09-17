@@ -39,7 +39,7 @@ A reusable GitHub Actions workflow that enforces minimum release age policies fo
 Create `.github/workflows/renovate-policy-check.yml` in your repository:
 
 ```yaml
-name: Renovate Policy Check
+name: Enforce Minimum Release Age Policy
 
 on:
   pull_request:

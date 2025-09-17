@@ -1,33 +1,15 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:base",
+    "config:recommended",
     ":semanticCommitTypeAll(chore)"
   ],
-  "rangeStrategy": "update-lockfile",
-  "dependencyDashboard": false,
-  "minimumReleaseAge": "10 days",
+  "minimumReleaseAge": "14 days",
   "packageRules": [
     {
+      "matchDepTypes": ["devDependencies"],
       "matchUpdateTypes": ["minor", "patch"],
-      "enabled": false
-    },
-    {
-      "matchUpdateTypes": ["major"],
-      "minimumReleaseAge": "14 days"
+      "groupName": "devDependencies (non-major)"
     }
-  ],
-  "lockFileMaintenance": {
-    "enabled": false,
-    "recreateWhen": "always",
-    "rebaseStalePrs": true,
-    "branchTopic": "lock-file-maintenance",
-    "commitMessageAction": "Lock file maintenance",
-    "schedule": [
-      "before 4am on monday"
-    ],
-    "prBodyDefinitions": {
-      "Change": "All locks refreshed"
-    }
-  }
+  ]
 }

@@ -1,0 +1,407 @@
+name: Renovate Minimum Release Age Policy Check
+
+on:
+  workflow_call:
+    inputs:
+      renovate-config-url:
+        description: 'URL to fetch renovate configuration from (optional)'
+        required: false
+        type: string
+        default: 'https://raw.githubusercontent.com/sweetalert2/renovate-config/main/default.json'
+      minimum-release-age-override:
+        description: 'Override minimum release age (e.g., "14 days", "7d", "2w")'
+        required: false
+        type: string
+      pr-title-pattern:
+        description: 'Custom regex pattern for PR title parsing'
+        required: false
+        type: string
+        default: 'fix\(deps\):\ update\ dependency\ ([^\ ]+)\ to\ v(.+)'
+    outputs:
+      package-name:
+        description: 'Extracted package name'
+        value: ${{ jobs.policy-check.outputs.package-name }}
+      current-version:
+        description: 'Current version from PR'
+        value: ${{ jobs.policy-check.outputs.current-version }}
+      next-version:
+        description: 'Next available version'
+        value: ${{ jobs.policy-check.outputs.next-version }}
+      days-difference:
+        description: 'Days between current and next version release'
+        value: ${{ jobs.policy-check.outputs.days-difference }}
+      policy-compliant:
+        description: 'Whether the update complies with minimum release age policy'
+        value: ${{ jobs.policy-check.outputs.policy-compliant }}
+
+jobs:
+  policy-check:
+    runs-on: ubuntu-latest
+    outputs:
+      package-name: ${{ steps.extract.outputs.package-name }}
+      current-version: ${{ steps.extract.outputs.current-version }}
+      next-version: ${{ steps.version-analysis.outputs.next-version }}
+      days-difference: ${{ steps.date-analysis.outputs.days-difference }}
+      policy-compliant: ${{ steps.policy-check.outputs.compliant }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Initialize Job Summary
+        run: |
+          echo "# 🤖 Renovate PR Analysis Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 📋 PR Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **Title:** ${{ github.event.pull_request.title }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Author:** ${{ github.event.pull_request.user.login }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **PR Number:** #${{ github.event.pull_request.number }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository:** ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+      - name: Extract Package Name and Version
+        id: extract
+        run: |
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          PATTERN="${{ inputs.pr-title-pattern }}"
+
+          echo "Original PR Title: $PR_TITLE"
+          echo "Using pattern: $PATTERN"
+
+          # Extract package name and version using the provided pattern
+          if [[ $PR_TITLE =~ $PATTERN ]]; then
+            PACKAGE_NAME="${BASH_REMATCH[1]}"
+            VERSION="${BASH_REMATCH[2]}"
+
+            echo "Package Name: $PACKAGE_NAME"
+            echo "Version: $VERSION"
+
+            # Set outputs and environment variables
+            echo "package-name=$PACKAGE_NAME" >> $GITHUB_OUTPUT
+            echo "current-version=$VERSION" >> $GITHUB_OUTPUT
+            echo "PACKAGE_NAME=$PACKAGE_NAME" >> $GITHUB_ENV
+            echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+            # Add to Job Summary
+            echo "## 📦 Package Analysis" >> $GITHUB_STEP_SUMMARY
+            echo "- **Package:** \`$PACKAGE_NAME\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Target Version:** \`$VERSION\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Update Type:** Dependency update" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "PR title does not match expected pattern"
+            echo "Expected pattern: $PATTERN"
+
+            # Add error to Job Summary
+            echo "## ❌ Error: Invalid PR Title Format" >> $GITHUB_STEP_SUMMARY
+            echo "The PR title does not match the expected pattern." >> $GITHUB_STEP_SUMMARY
+            echo "**Expected pattern:** \`$PATTERN\`" >> $GITHUB_STEP_SUMMARY
+            echo "**Actual title:** \`$PR_TITLE\`" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Analyze Package Versions
+        id: version-analysis
+        if: env.PACKAGE_NAME != ''
+        run: |
+          echo "Fetching versions for package: $PACKAGE_NAME"
+          echo "Current version from PR: $VERSION"
+
+          # Install semver package for version comparison
+          npm install semver
+
+          # Fetch all versions of the package
+          echo "Fetching all available versions..."
+          npm view $PACKAGE_NAME versions --json > versions.json
+
+          # Create a Node.js script to analyze versions
+          cat > analyze_versions.js << 'EOF'
+          const fs = require('fs');
+          const semver = require('semver');
+
+          const currentVersion = process.env.VERSION;
+          const versionsData = fs.readFileSync('versions.json', 'utf8');
+          const allVersions = JSON.parse(versionsData);
+
+          console.log(`\nAnalyzing versions for current version: ${currentVersion}`);
+          console.log(`Total available versions: ${allVersions.length}`);
+
+          // Filter to valid semver versions and sort them
+          const validVersions = allVersions
+            .filter(v => semver.valid(v))
+            .sort(semver.compare);
+
+          console.log(`Valid semver versions: ${validVersions.length}`);
+
+          // Find the current version in the list
+          const currentIndex = validVersions.indexOf(currentVersion);
+
+          if (currentIndex === -1) {
+            console.log(`❌ Current version ${currentVersion} not found in available versions`);
+            process.exit(1);
+          }
+
+          console.log(`\n📍 Current version position: ${currentIndex + 1}/${validVersions.length}`);
+
+          // Find next version (if exists)
+          if (currentIndex < validVersions.length - 1) {
+            const nextVersion = validVersions[currentIndex + 1];
+            const nextDiff = semver.diff(currentVersion, nextVersion);
+            console.log(`⬆️  Next available version: ${nextVersion} (${nextDiff} update)`);
+
+            // Set as environment variable and output
+            fs.appendFileSync(process.env.GITHUB_ENV, `NEXT_VERSION=${nextVersion}\n`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `next-version=${nextVersion}\n`);
+            console.log(`✅ Set NEXT_VERSION=${nextVersion}`);
+          } else {
+            console.log(`✅ Current version ${currentVersion} is the latest available`);
+            fs.appendFileSync(process.env.GITHUB_ENV, `NEXT_VERSION=none\n`);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `next-version=none\n`);
+          }
+
+          // Show latest versions by type
+          const latest = semver.maxSatisfying(validVersions, '*');
+          const latestMajor = semver.maxSatisfying(validVersions, `^${semver.major(currentVersion)}.0.0`);
+          const latestMinor = semver.maxSatisfying(validVersions, `^${semver.major(currentVersion)}.${semver.minor(currentVersion)}.0`);
+
+          console.log(`\n📊 Version Analysis:`);
+          console.log(`   Latest overall: ${latest}`);
+          console.log(`   Latest in major ${semver.major(currentVersion)}.x.x: ${latestMajor}`);
+          console.log(`   Latest in minor ${semver.major(currentVersion)}.${semver.minor(currentVersion)}.x: ${latestMinor}`);
+
+          // Add to Job Summary
+          const versionSummary = `## 🔄 Version Analysis\n` +
+            `- **Current PR Version:** \`${currentVersion}\`\n` +
+            `- **Next Available Version:** \`${process.env.NEXT_VERSION || 'none'}\`\n` +
+            `- **Latest Overall:** \`${latest}\`\n` +
+            `- **Position:** ${currentIndex + 1} of ${validVersions.length} versions\n\n`;
+
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, versionSummary);
+          EOF
+
+          # Run the analysis
+          node analyze_versions.js
+
+          # Clean up
+          rm versions.json analyze_versions.js
+
+      - name: Calculate Release Date Difference
+        id: date-analysis
+        if: env.PACKAGE_NAME != '' && env.NEXT_VERSION != 'none'
+        run: |
+          echo "Calculating release date difference between ${{ env.VERSION }} and ${{ env.NEXT_VERSION }}"
+
+          # Fetch detailed package information with timestamps
+          echo "Fetching release dates..."
+          npm view ${{ env.PACKAGE_NAME }} time --json > package_times.json
+
+          # Create a Node.js script to calculate date difference
+          cat > calculate_date_diff.js << 'EOF'
+          const fs = require('fs');
+
+          const currentVersion = process.env.VERSION;
+          const nextVersion = process.env.NEXT_VERSION;
+
+          console.log(`\nCalculating release date difference:`);
+          console.log(`Current version: ${currentVersion}`);
+          console.log(`Next version: ${nextVersion}`);
+
+          // Read the package times data
+          const timesData = fs.readFileSync('package_times.json', 'utf8');
+          const times = JSON.parse(timesData);
+
+          // Get release dates
+          const currentReleaseDate = times[currentVersion];
+          const nextReleaseDate = times[nextVersion];
+
+          if (!currentReleaseDate || !nextReleaseDate) {
+            console.log(`❌ Release date not found`);
+            process.exit(1);
+          }
+
+          // Parse dates
+          const currentDate = new Date(currentReleaseDate);
+          const nextDate = new Date(nextReleaseDate);
+
+          console.log(`📅 ${currentVersion} released: ${currentDate.toISOString().split('T')[0]}`);
+          console.log(`📅 ${nextVersion} released: ${nextDate.toISOString().split('T')[0]}`);
+
+          // Calculate difference in milliseconds, then convert to days
+          const timeDifferenceMs = nextDate.getTime() - currentDate.getTime();
+          const daysDifference = Math.ceil(timeDifferenceMs / (1000 * 60 * 60 * 24));
+
+          console.log(`\n⏰ Time difference: ${daysDifference} days`);
+
+          // Set as environment variable and output
+          fs.appendFileSync(process.env.GITHUB_ENV, `DAYS_DIFFERENCE=${daysDifference}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `days-difference=${daysDifference}\n`);
+
+          // Calculate version ages
+          const now = new Date();
+          const currentVersionAgeDays = Math.floor((now.getTime() - currentDate.getTime()) / (1000 * 60 * 60 * 24));
+          const nextVersionAgeDays = Math.floor((now.getTime() - nextDate.getTime()) / (1000 * 60 * 60 * 24));
+
+          // Add to Job Summary
+          const releaseDateSummary = `## 📅 Release Date Analysis\n` +
+            `- **${currentVersion} released:** ${currentDate.toISOString().split('T')[0]} (${currentVersionAgeDays} days old)\n` +
+            `- **${nextVersion} released:** ${nextDate.toISOString().split('T')[0]} (${nextVersionAgeDays} days old)\n` +
+            `- **Time difference:** ${daysDifference} days between releases\n\n`;
+
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, releaseDateSummary);
+          EOF
+
+          # Run the date calculation
+          node calculate_date_diff.js
+
+          # Clean up
+          rm package_times.json calculate_date_diff.js
+
+      - name: Check Minimum Release Age Policy
+        id: policy-check
+        if: env.PACKAGE_NAME != '' && env.NEXT_VERSION != 'none' && env.DAYS_DIFFERENCE != ''
+        run: |
+          echo "Checking minimum release age policy..."
+
+          # Determine config source
+          if [ -n "${{ inputs.minimum-release-age-override }}" ]; then
+            echo "Using override minimum release age: ${{ inputs.minimum-release-age-override }}"
+            MINIMUM_RELEASE_AGE="${{ inputs.minimum-release-age-override }}"
+            CONFIG_SOURCE="Input override"
+          elif [ -n "${{ inputs.renovate-config-url }}" ]; then
+            echo "Fetching renovate config from: ${{ inputs.renovate-config-url }}"
+            curl -s -L "${{ inputs.renovate-config-url }}" > remote_renovate_config.json
+
+            if [ -f "remote_renovate_config.json" ] && [ -s "remote_renovate_config.json" ]; then
+              MINIMUM_RELEASE_AGE=$(node -e "console.log(JSON.parse(require('fs').readFileSync('remote_renovate_config.json', 'utf8')).minimumReleaseAge || '')")
+              CONFIG_SOURCE="Remote config"
+              rm remote_renovate_config.json
+            else
+              echo "Failed to fetch remote config, checking local renovate.json"
+              if [ -f "renovate.json" ]; then
+                MINIMUM_RELEASE_AGE=$(node -e "console.log(JSON.parse(require('fs').readFileSync('renovate.json', 'utf8')).minimumReleaseAge || '')")
+                CONFIG_SOURCE="Local renovate.json"
+              else
+                echo "No config found"
+                MINIMUM_RELEASE_AGE=""
+                CONFIG_SOURCE="None"
+              fi
+            fi
+          else
+            echo "Checking local renovate.json"
+            if [ -f "renovate.json" ]; then
+              MINIMUM_RELEASE_AGE=$(node -e "console.log(JSON.parse(require('fs').readFileSync('renovate.json', 'utf8')).minimumReleaseAge || '')")
+              CONFIG_SOURCE="Local renovate.json"
+            else
+              MINIMUM_RELEASE_AGE=""
+              CONFIG_SOURCE="None"
+            fi
+          fi
+
+          # Create policy check script
+          cat > check_policy.js << 'EOF'
+          const fs = require('fs');
+
+          const daysDifference = parseInt(process.env.DAYS_DIFFERENCE);
+          const currentVersion = process.env.VERSION;
+          const nextVersion = process.env.NEXT_VERSION;
+          const minimumReleaseAge = process.env.MINIMUM_RELEASE_AGE;
+          const configSource = process.env.CONFIG_SOURCE;
+
+          console.log(`\n🔍 Checking Renovate Policy:`);
+          console.log(`Current version: ${currentVersion}`);
+          console.log(`Next version: ${nextVersion}`);
+          console.log(`Days between releases: ${daysDifference}`);
+          console.log(`Config source: ${configSource}`);
+
+          if (!minimumReleaseAge) {
+            console.log(`⚠️  No minimumReleaseAge configured`);
+            console.log(`✅ Policy check skipped - no minimum release age requirement`);
+
+            const skipSummary = `## ⚠️ Minimum Release Age Policy Check SKIPPED\n\n` +
+              `**Reason:** No \`minimumReleaseAge\` configuration found\n` +
+              `**Config source:** ${configSource}\n` +
+              `**Status:** Policy check bypassed\n\n`;
+
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, skipSummary);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `compliant=skipped\n`);
+            process.exit(0);
+          }
+
+          console.log(`📋 Configured minimumReleaseAge: ${minimumReleaseAge}`);
+
+          // Parse minimumReleaseAge
+          let requiredDays;
+
+          if (minimumReleaseAge.includes('day')) {
+            requiredDays = parseInt(minimumReleaseAge.match(/\d+/)[0]);
+          } else if (minimumReleaseAge.includes('week')) {
+            requiredDays = parseInt(minimumReleaseAge.match(/\d+/)[0]) * 7;
+          } else if (minimumReleaseAge.endsWith('d')) {
+            requiredDays = parseInt(minimumReleaseAge.replace('d', ''));
+          } else if (minimumReleaseAge.endsWith('w')) {
+            requiredDays = parseInt(minimumReleaseAge.replace('w', '')) * 7;
+          } else {
+            const parsed = parseInt(minimumReleaseAge);
+            if (!isNaN(parsed)) {
+              requiredDays = parsed;
+            } else {
+              console.log(`❌ Unable to parse minimumReleaseAge format: ${minimumReleaseAge}`);
+              process.exit(1);
+            }
+          }
+
+          console.log(`📊 Policy Analysis:`);
+          console.log(`   Required minimum age: ${requiredDays} days`);
+          console.log(`   Actual age difference: ${daysDifference} days`);
+
+          if (daysDifference >= requiredDays) {
+            console.log(`✅ PASS: Release age requirement met`);
+
+            const successSummary = `## ✅ Minimum Release Age Policy Check PASSED\n\n` +
+              `**Package:** ${currentVersion} → ${nextVersion}\n` +
+              `**Required minimum age:** ${requiredDays} days\n` +
+              `**Actual age difference:** ${daysDifference} days\n` +
+              `**Config source:** ${configSource}\n` +
+              `**Status:** ✅ COMPLIANT\n\n`;
+
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, successSummary);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `compliant=true\n`);
+            process.exit(0);
+          } else {
+            const shortageInfo = `${requiredDays - daysDifference} more days`;
+            console.log(`❌ FAIL: Release age requirement not met`);
+
+            const failureSummary = `## ❌ Minimum Release Age Policy Check FAILED\n\n` +
+              `**Package:** ${currentVersion} → ${nextVersion}\n` +
+              `**Required minimum age:** ${requiredDays} days\n` +
+              `**Actual age difference:** ${daysDifference} days\n` +
+              `**Shortage:** ${shortageInfo} needed\n` +
+              `**Config source:** ${configSource}\n` +
+              `**Status:** ❌ NON-COMPLIANT\n\n` +
+              `> **This PR violates the minimum release age policy.**`;
+
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, failureSummary);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `compliant=false\n`);
+
+            console.log(`::error title=Minimum Release Age Policy Violation::` +
+              `Version ${nextVersion} needs ${shortageInfo} to meet the ${requiredDays}-day minimum age requirement`);
+
+            process.exit(1);
+          }
+          EOF
+
+          # Set environment variables for the script
+          export MINIMUM_RELEASE_AGE="$MINIMUM_RELEASE_AGE"
+          export CONFIG_SOURCE="$CONFIG_SOURCE"
+
+          # Run the policy check
+          node check_policy.js
+
+          # Clean up
+          rm check_policy.js

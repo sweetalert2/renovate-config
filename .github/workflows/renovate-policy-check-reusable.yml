@@ -103,11 +103,6 @@ jobs:
             exit 1
           fi
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-
       - name: Analyze Package Versions
         id: version-analysis
         if: env.PACKAGE_NAME != ''

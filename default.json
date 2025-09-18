@@ -7,9 +7,14 @@
   "minimumReleaseAge": "14 days",
   "packageRules": [
     {
+      "matchDepTypes": ["dependencies"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "dependencies (non-major)"
+    },
+    {
       "matchDepTypes": ["devDependencies"],
       "matchUpdateTypes": ["minor", "patch"],
-      "groupName": "devDependencies (non-major)"
+      "groupName": "dev-dependencies (non-major)"
     }
   ]
 }
